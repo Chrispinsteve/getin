@@ -22,7 +22,7 @@ export function HeroSection() {
                 Turn Your Space Into Income — <span className="text-primary">Effortlessly.</span>
               </h1>
               <p className="text-lg sm:text-xl text-muted-foreground max-w-lg leading-relaxed">
-                 host smarter, earn faster, reach travelers who  your space.
+                Host smarter, earn faster, reach travelers who love your space.
               </p>
             </div>
 
