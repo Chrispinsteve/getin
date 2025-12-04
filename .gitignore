@@ -1,2 +1,5 @@
 .env
 .env.local
+extracted-ui-components/
+getin-ui-components/
+*.zip
