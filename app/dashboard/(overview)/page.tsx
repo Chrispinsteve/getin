@@ -3,7 +3,7 @@ import { StatsCard } from "@/components/dashboard/stats-card"
 import { OverviewChart } from "@/components/dashboard/overview-chart"
 import { RecentBookings } from "@/components/dashboard/recent-bookings"
 import { Home, CalendarDays, DollarSign, TrendingUp } from "lucide-react"
-import { getDashboardStats } from "./actions"
+import { getDashboardStats } from "../actions"
 
 export default async function DashboardOverviewPage() {
   const { stats } = await getDashboardStats()
@@ -51,3 +51,4 @@ export default async function DashboardOverviewPage() {
     </div>
   )
 }
+
