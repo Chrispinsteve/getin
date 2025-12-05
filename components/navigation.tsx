@@ -38,12 +38,12 @@ export function Navigation() {
             <Button variant="ghost" className="text-foreground/80 hover:text-foreground">
               Browse Stays
             </Button>
-            <Button variant="ghost" className="text-foreground/80 hover:text-foreground">
-              Login
-            </Button>
-            <Button variant="outline" className="border-border bg-transparent">
-              Sign Up
-            </Button>
+            <Button asChild variant="ghost">
+  <Link href="/login">Login</Link>
+</Button>
+            <Button asChild variant="outline">
+  <Link href="/signup">Sign Up</Link>
+</Button>
             <Button asChild className="bg-primary text-primary-foreground hover:bg-primary/90">
               <Link href="/become-a-host">Become a Host</Link>
             </Button>
