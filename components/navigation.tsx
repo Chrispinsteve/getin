@@ -3,17 +3,11 @@
 import { useState, useEffect } from "react"
 import Link from "next/link"
 import { Button } from "@/components/ui/button"
-import { Menu, X, Plane, Heart, User } from "lucide-react"
-import { createClient } from "@/lib/supabase/client"
-
-type UserRole = "guest" | "host" | null
+import { Menu, X } from "lucide-react"
 
 export function Navigation() {
   const [isScrolled, setIsScrolled] = useState(false)
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false)
-  const [user, setUser] = useState<any>(null)
-  const [userRole, setUserRole] = useState<UserRole>(null)
-  const [loading, setLoading] = useState(true)
 
   useEffect(() => {
     const handleScroll = () => {
@@ -22,50 +16,6 @@ export function Navigation() {
     window.addEventListener("scroll", handleScroll)
     return () => window.removeEventListener("scroll", handleScroll)
   }, [])
-
-  useEffect(() => {
-    const supabase = createClient()
-
-    async function loadUser() {
-      const { data: { user } } = await supabase.auth.getUser()
-      setUser(user)
-
-      if (user) {
-        const { data: profile } = await supabase
-          .from("profiles")
-          .select("roles")
-          .eq("id", user.id)
-          .single()
-
-        const roles = profile?.roles || []
-        if (roles.includes("host")) {
-          setUserRole("host")
-        } else if (roles.includes("guest")) {
-          setUserRole("guest")
-        }
-      }
-      setLoading(false)
-    }
-
-    loadUser()
-
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setUser(session?.user || null)
-      if (!session?.user) {
-        setUserRole(null)
-      }
-    })
-
-    return () => subscription.unsubscribe()
-  }, [])
-
-  const handleSignOut = async () => {
-    const supabase = createClient()
-    await supabase.auth.signOut()
-    setUser(null)
-    setUserRole(null)
-    window.location.href = "/"
-  }
 
   return (
     <nav
@@ -88,57 +38,15 @@ export function Navigation() {
             <Button asChild variant="ghost" className="text-foreground/80 hover:text-foreground">
               <Link href="/listings">Browse Stays</Link>
             </Button>
-
-            {loading ? null : user ? (
-              <>
-                {/* Guest Navigation Links */}
-                {userRole === "guest" && (
-                  <>
-                    <Button asChild variant="ghost" className="text-foreground/80 hover:text-foreground">
-                      <Link href="/guest/voyages">
-                        <Plane className="h-4 w-4 mr-2" />
-                        My Trips
-                      </Link>
-                    </Button>
-                    <Button asChild variant="ghost" className="text-foreground/80 hover:text-foreground">
-                      <Link href="/guest/favoris">
-                        <Heart className="h-4 w-4 mr-2" />
-                        Favorites
-                      </Link>
-                    </Button>
-                    <Button asChild variant="ghost" className="text-foreground/80 hover:text-foreground">
-                      <Link href="/guest/profil">
-                        <User className="h-4 w-4 mr-2" />
-                        Profile
-                      </Link>
-                    </Button>
-                  </>
-                )}
-
-                {/* Host Navigation Links */}
-                {userRole === "host" && (
-                  <Button asChild variant="ghost" className="text-foreground/80 hover:text-foreground">
-                    <Link href="/dashboard">Dashboard</Link>
-                  </Button>
-                )}
-
-                <Button variant="outline" onClick={handleSignOut}>
-                  Sign Out
-                </Button>
-              </>
-            ) : (
-              <>
-                <Button asChild variant="ghost">
-                  <Link href="/login">Login</Link>
-                </Button>
-                <Button asChild variant="outline">
-                  <Link href="/signup">Sign Up</Link>
-                </Button>
-                <Button asChild className="bg-primary text-primary-foreground hover:bg-primary/90">
-                  <Link href="/become-a-host">Become a Host</Link>
-                </Button>
-              </>
-            )}
+            <Button asChild variant="ghost">
+              <Link href="/login">Login</Link>
+            </Button>
+            <Button asChild variant="outline">
+              <Link href="/signup">Sign Up</Link>
+            </Button>
+            <Button asChild className="bg-primary text-primary-foreground hover:bg-primary/90">
+              <Link href="/become-a-host">Become a Host</Link>
+            </Button>
           </div>
 
           {/* Mobile Menu Button */}
@@ -160,59 +68,25 @@ export function Navigation() {
           <div className="md:hidden py-4 border-t border-border bg-card/95 backdrop-blur-xl">
             <div className="flex flex-col gap-2">
               <Button asChild variant="ghost" className="justify-start text-foreground/80">
-                <Link href="/listings">Browse Stays</Link>
+                <Link href="/listings" onClick={() => setIsMobileMenuOpen(false)}>
+                  Browse Stays
+                </Link>
               </Button>
-
-              {user ? (
-                <>
-                  {/* Guest Mobile Links */}
-                  {userRole === "guest" && (
-                    <>
-                      <Button asChild variant="ghost" className="justify-start text-foreground/80">
-                        <Link href="/guest/voyages">
-                          <Plane className="h-4 w-4 mr-2" />
-                          My Trips
-                        </Link>
-                      </Button>
-                      <Button asChild variant="ghost" className="justify-start text-foreground/80">
-                        <Link href="/guest/favoris">
-                          <Heart className="h-4 w-4 mr-2" />
-                          Favorites
-                        </Link>
-                      </Button>
-                      <Button asChild variant="ghost" className="justify-start text-foreground/80">
-                        <Link href="/guest/profil">
-                          <User className="h-4 w-4 mr-2" />
-                          Profile
-                        </Link>
-                      </Button>
-                    </>
-                  )}
-
-                  {/* Host Mobile Link */}
-                  {userRole === "host" && (
-                    <Button asChild variant="ghost" className="justify-start text-foreground/80">
-                      <Link href="/dashboard">Dashboard</Link>
-                    </Button>
-                  )}
-
-                  <Button variant="outline" className="justify-start" onClick={handleSignOut}>
-                    Sign Out
-                  </Button>
-                </>
-              ) : (
-                <>
-                  <Button asChild variant="ghost" className="justify-start text-foreground/80">
-                    <Link href="/login">Login</Link>
-                  </Button>
-                  <Button asChild variant="outline" className="justify-start bg-transparent">
-                    <Link href="/signup">Sign Up</Link>
-                  </Button>
-                  <Button asChild className="bg-primary text-primary-foreground">
-                    <Link href="/become-a-host">Become a Host</Link>
-                  </Button>
-                </>
-              )}
+              <Button asChild variant="ghost" className="justify-start text-foreground/80">
+                <Link href="/login" onClick={() => setIsMobileMenuOpen(false)}>
+                  Login
+                </Link>
+              </Button>
+              <Button asChild variant="outline" className="justify-start bg-transparent">
+                <Link href="/signup" onClick={() => setIsMobileMenuOpen(false)}>
+                  Sign Up
+                </Link>
+              </Button>
+              <Button asChild className="bg-primary text-primary-foreground">
+                <Link href="/become-a-host" onClick={() => setIsMobileMenuOpen(false)}>
+                  Become a Host
+                </Link>
+              </Button>
             </div>
           </div>
         )}
