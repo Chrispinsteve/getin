@@ -1,78 +1,100 @@
-import { createServerClient } from '@supabase/ssr'
-import { NextResponse, type NextRequest } from 'next/server'
+import { createServerClient } from "@supabase/ssr";
+import { NextResponse, type NextRequest } from "next/server";
 
 export async function middleware(request: NextRequest) {
-  let supabaseResponse = NextResponse.next({
-    request,
-  })
-
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
-  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
-
-  if (!supabaseUrl || !supabaseAnonKey) {
-    return supabaseResponse
-  }
+  let response = NextResponse.next({
+    request: {
+      headers: request.headers,
+    },
+  });
 
   const supabase = createServerClient(
-    supabaseUrl,
-    supabaseAnonKey,
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
       cookies: {
-        getAll() {
-          return request.cookies.getAll()
+        get(name: string) {
+          return request.cookies.get(name)?.value;
         },
-        setAll(cookiesToSet) {
-          cookiesToSet.forEach(({ name, value }) =>
-            request.cookies.set(name, value)
-          )
-          supabaseResponse = NextResponse.next({
-            request,
-          })
-          cookiesToSet.forEach(({ name, value, options }) =>
-            supabaseResponse.cookies.set(name, value, options)
-          )
+        set(name: string, value: string, options: any) {
+          response.cookies.set({ name, value, ...options });
+        },
+        remove(name: string, options: any) {
+          response.cookies.set({ name, value: "", ...options });
         },
       },
-    }
-  )
+    },
+  );
 
-  // Refresh session
   const {
     data: { user },
-  } = await supabase.auth.getUser()
+  } = await supabase.auth.getUser();
+  const pathname = request.nextUrl.pathname;
 
-  // Routes protégées - nécessitent une authentification
-  const protectedRoutes = ['/dashboard', '/become-a-host']
-  const isProtectedRoute = protectedRoutes.some(route =>
-    request.nextUrl.pathname.startsWith(route)
-  )
+  // Public routes - accessible to everyone
+  const publicRoutes = [
+    "/",
+    "/search",
+    "/login",
+    "/signup",
+    "/forgot-password",
+  ];
+  const isPublicRoute = publicRoutes.some(
+    (route) => pathname === route || pathname.startsWith("/listings/"),
+  );
 
-  if (isProtectedRoute && !user) {
-    const url = request.nextUrl.clone()
-    url.pathname = '/login'
-    url.searchParams.set('redirect', request.nextUrl.pathname)
-    return NextResponse.redirect(url)
+  if (isPublicRoute) {
+    return response;
   }
 
-  // Routes auth - rediriger vers dashboard si déjà connecté
-  const authRoutes = ['/login', '/signup']
-  const isAuthRoute = authRoutes.some(route =>
-    request.nextUrl.pathname === route
-  )
+  // Auth required for protected routes
+  if (!user) {
+    const guestRoutes = ["/guest"];
+    const hostRoutes = ["/dashboard", "/become-a-host"];
 
-  if (isAuthRoute && user) {
-    const redirectTo = request.nextUrl.searchParams.get('redirect') || '/dashboard'
-    const url = request.nextUrl.clone()
-    url.pathname = redirectTo
-    url.search = ''
-    return NextResponse.redirect(url)
+    if (
+      guestRoutes.some((route) => pathname.startsWith(route)) ||
+      hostRoutes.some((route) => pathname.startsWith(route))
+    ) {
+      const redirectUrl = new URL("/login", request.url);
+      redirectUrl.searchParams.set("redirect", pathname);
+      return NextResponse.redirect(redirectUrl);
+    }
+    return response;
   }
 
-  return supabaseResponse
+  // Get user roles
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("roles")
+    .eq("id", user.id)
+    .single();
+
+  const roles = profile?.roles || [];
+  const isGuest = roles.includes("guest");
+  const isHost = roles.includes("host");
+
+  // STRICT ROLE SEPARATION - Guest routes (/guest/*)
+  if (pathname.startsWith("/guest")) {
+    if (!isGuest) {
+      // Unauthorized access redirects to home
+      return NextResponse.redirect(new URL("/", request.url));
+    }
+  }
+
+  // STRICT ROLE SEPARATION - Host routes (/dashboard/*, /become-a-host/*)
+  if (pathname.startsWith("/dashboard") || pathname.startsWith("/become-a-host")) {
+    if (!isHost) {
+      // Unauthorized access redirects to home
+      return NextResponse.redirect(new URL("/", request.url));
+    }
+  }
+
+  return response;
 }
 
 export const config = {
   matcher: [
-    '/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
+    "/((?!_next/static|_next/image|favicon.ico|api|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
   ],
-}
+};
