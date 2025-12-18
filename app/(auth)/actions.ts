@@ -7,6 +7,7 @@ import { revalidatePath } from "next/cache";
 export type AuthState = {
   error?: string;
   success?: boolean;
+  message?: string;
   fieldErrors?: {
     email?: string[];
     password?: string[];
@@ -25,7 +26,7 @@ export type AuthState = {
 // =====================================================
 
 // =====================================================
-// SIGNUP
+// SIGN UP
 // =====================================================
 export async function signUp(
   prevState: AuthState | null,
@@ -41,9 +42,8 @@ export async function signUp(
   const mode = formData.get("mode") as string | null;
   const redirectTo = formData.get("redirectTo") as string | null;
 
-  console.log("[AUTH] Signup attempt for:", email, "mode:", mode);
+  console.log("[AUTH] Signup attempt:", { email, mode });
 
-  // Validate passwords match
   if (password !== confirmPassword) {
     return {
       error: "Les mots de passe ne correspondent pas",
@@ -55,8 +55,6 @@ export async function signUp(
 
   const fullName = `${firstName} ${lastName}`.trim();
 
-  // Step 1: Create auth user
-  // The database trigger will automatically create the profile
   const { data, error } = await supabase.auth.signUp({
     email,
     password,
@@ -70,33 +68,27 @@ export async function signUp(
   });
 
   if (error) {
-    console.error("[AUTH] Signup auth error:", error);
+    console.error("[AUTH] Signup error:", error);
     return { error: error.message };
   }
 
   if (!data.user) {
-    console.error("[AUTH] Signup failed: no user returned");
     return { error: "Erreur lors de la création du compte" };
   }
 
-  console.log("[AUTH] Auth user created:", data.user.id);
-  // Profile is created by database trigger - we don't insert here
+  console.log("[AUTH] User created:", data.user.id);
 
-  // Step 2: Check if email confirmation is required
-  if (data.user && !data.session) {
-    console.log("[AUTH] Email confirmation required");
+  // Email confirmation required
+  if (!data.session) {
     return {
       success: true,
-      error: "Vérifiez votre email pour confirmer votre inscription.",
+      message: "Vérifiez votre email pour confirmer votre inscription.",
     };
   }
 
-  revalidatePath("/", "layout");
-
-  // Step 3: Determine redirect destination
   let destination = "/";
 
-  if (redirectTo && redirectTo.trim() !== "") {
+  if (redirectTo?.trim()) {
     destination = redirectTo;
   } else if (mode === "host") {
     destination = "/become-a-host";
@@ -104,7 +96,7 @@ export async function signUp(
     destination = "/guest/voyages";
   }
 
-  console.log("[AUTH] Signup complete, redirecting to:", destination);
+  console.log("[AUTH] Signup redirect:", destination);
   redirect(destination);
 }
 
@@ -122,45 +114,41 @@ export async function signIn(
   const mode = formData.get("mode") as string | null;
   const redirectTo = formData.get("redirectTo") as string | null;
 
-  console.log("[AUTH] Sign in attempt for:", email, "mode:", mode);
+  console.log("[AUTH] Sign-in attempt:", { email, mode });
 
-  // Step 1: Authenticate
   const { data, error } = await supabase.auth.signInWithPassword({
     email,
     password,
   });
 
   if (error) {
-    console.error("[AUTH] Sign in auth error:", error);
+    console.error("[AUTH] Sign-in error:", error);
     return { error: error.message };
   }
 
-  console.log("[AUTH] Auth successful for user:", data.user.id);
+  const userId = data.user.id;
+  console.log("[AUTH] Authenticated:", userId);
 
-  // Step 2: Read user roles (DB is source of truth - we only SELECT)
   const { data: profile, error: profileError } = await supabase
     .from("profiles")
     .select("roles")
-    .eq("id", data.user.id)
-    .single();
+    .eq("id", userId)
+    .maybeSingle();
 
   if (profileError) {
-    // Profile should exist from the signup trigger
-    // If it doesn't, this is a data integrity issue
-    console.error("[AUTH] Profile not found for user:", data.user.id, profileError);
+    console.error("[AUTH] Profile fetch error:", profileError);
   }
 
-  const roles = profile?.roles || ["guest"];
+  if (!profile) {
+    console.warn("[AUTH] Profile missing, defaulting to guest:", userId);
+  }
+
+  const roles = profile?.roles ?? ["guest"];
   const isHost = roles.includes("host");
 
-  console.log("[AUTH] User roles:", roles, "isHost:", isHost);
-
-  revalidatePath("/", "layout");
-
-  // Step 3: Determine redirect destination
   let destination = "/";
 
-  if (redirectTo && redirectTo.trim() !== "") {
+  if (redirectTo?.trim()) {
     destination = redirectTo;
   } else if (mode === "host") {
     destination = isHost ? "/dashboard" : "/become-a-host";
@@ -168,7 +156,7 @@ export async function signIn(
     destination = "/guest/voyages";
   }
 
-  console.log("[AUTH] Sign in complete, redirecting to:", destination);
+  console.log("[AUTH] Sign-in redirect:", destination);
   redirect(destination);
 }
 
@@ -196,8 +184,11 @@ export async function getUser() {
 
 // =====================================================
 // ENSURE HOST EXISTS
-// This is the ONLY place where host records are created
-// Called when: user starts host onboarding OR creates a listing
+// =====================================================
+// This is the ONLY place host records are created
+// Called from:
+// - /become-a-host onboarding
+// - Listing creation flow
 // =====================================================
 export async function ensureHostExists(): Promise<{
   hostId: string | null;
@@ -205,72 +196,59 @@ export async function ensureHostExists(): Promise<{
 }> {
   const supabase = await createClient();
 
-  // Step 1: Get authenticated user
   const {
     data: { user },
     error: authError,
   } = await supabase.auth.getUser();
 
   if (authError || !user) {
-    console.error("[HOST] Not authenticated");
     return { hostId: null, error: "Non authentifié" };
   }
 
-  console.log("[HOST] Ensuring host exists for user:", user.id);
+  console.log("[HOST] Ensure host for user:", user.id);
 
-  // Step 2: Check if host record already exists
   const { data: existingHost, error: fetchError } = await supabase
     .from("hosts")
     .select("id")
     .eq("user_id", user.id)
-    .single();
+    .maybeSingle();
+
+  if (fetchError) {
+    console.error("[HOST] Host fetch error:", fetchError);
+    return { hostId: null, error: fetchError.message };
+  }
 
   if (existingHost) {
-    console.log("[HOST] Host already exists:", existingHost.id);
     return { hostId: existingHost.id, error: null };
   }
 
-  // Step 3: Create host record if it doesn't exist (PGRST116 = not found)
-  if (fetchError && fetchError.code === "PGRST116") {
-    console.log("[HOST] Creating new host record");
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("full_name")
+    .eq("id", user.id)
+    .maybeSingle();
 
-    // Get profile for name data (READ ONLY - profile created by trigger)
-    const { data: profile } = await supabase
-      .from("profiles")
-      .select("full_name")
-      .eq("id", user.id)
-      .single();
+  const nameSource =
+    profile?.full_name || user.email?.split("@")[0] || "";
+  const [firstName, ...rest] = nameSource.split(" ");
+  const lastName = rest.join(" ");
 
-    const names = (
-      profile?.full_name ||
-      user.email?.split("@")[0] ||
-      ""
-    ).split(" ");
-    const firstName = names[0] || "";
-    const lastName = names.slice(1).join(" ") || "";
+  const { data: newHost, error: createError } = await supabase
+    .from("hosts")
+    .insert({
+      user_id: user.id,
+      email: user.email,
+      first_name: firstName,
+      last_name: lastName,
+    })
+    .select("id")
+    .single();
 
-    const { data: newHost, error: createError } = await supabase
-      .from("hosts")
-      .insert({
-        user_id: user.id,
-        email: user.email,
-        first_name: firstName,
-        last_name: lastName,
-      })
-      .select("id")
-      .single();
-
-    if (createError) {
-      console.error("[HOST] Host creation failed:", createError);
-      return { hostId: null, error: createError.message };
-    }
-
-    console.log("[HOST] Host created successfully:", newHost.id);
-    // The database trigger will automatically add 'host' role to profile
-    return { hostId: newHost.id, error: null };
+  if (createError) {
+    console.error("[HOST] Host creation error:", createError);
+    return { hostId: null, error: createError.message };
   }
 
-  // Unexpected error
-  console.error("[HOST] Unexpected error:", fetchError);
-  return { hostId: null, error: fetchError?.message || "Erreur inconnue" };
+  console.log("[HOST] Host created:", newHost.id);
+  return { hostId: newHost.id, error: null };
 }
