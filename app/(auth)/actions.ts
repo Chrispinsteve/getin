@@ -78,13 +78,35 @@ export async function signUp(
     };
   }
 
+  // Create profile record with default guest role
+  // This ensures the profile exists even if database trigger fails
+  const { error: profileError } = await supabase
+    .from("profiles")
+    .upsert({
+      id: data.user.id,
+      full_name: fullName,
+      email: email,
+      roles: ["guest"],
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    }, {
+      onConflict: "id",
+      ignoreDuplicates: false,
+    });
+
+  if (profileError) {
+    console.error("Profile creation error:", profileError);
+    // Don't fail signup if profile creation fails - log and continue
+    // The profile may have been created by a database trigger
+  }
+
   revalidatePath("/", "layout");
 
-  // Intent-based redirect
+  // Intent-based redirect - check for non-empty string
   let destination = "/";
   
-  if (redirectTo) {
-    // Explicit redirect takes priority
+  if (redirectTo && redirectTo.trim() !== "") {
+    // Explicit redirect takes priority (must be non-empty)
     destination = redirectTo;
   } else if (mode === "host") {
     // Host intent → onboarding
@@ -125,23 +147,38 @@ export async function signIn(
     return { error: error.message };
   }
 
-  // Get user roles
-  const { data: profile } = await supabase
+  // Get user roles - with fallback if profile doesn't exist
+  const { data: profile, error: profileError } = await supabase
     .from("profiles")
     .select("roles")
     .eq("id", data.user.id)
     .single();
+
+  // If profile doesn't exist, create it with default guest role
+  if (profileError && profileError.code === "PGRST116") {
+    console.log("Creating missing profile for user:", data.user.id);
+    await supabase
+      .from("profiles")
+      .insert({
+        id: data.user.id,
+        email: data.user.email,
+        full_name: data.user.user_metadata?.full_name || "",
+        roles: ["guest"],
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      });
+  }
 
   const roles = profile?.roles || ["guest"];
   const isHost = roles.includes("host");
 
   revalidatePath("/", "layout");
 
-  // Determine destination based on intent
+  // Determine destination based on intent - check for non-empty string
   let destination = "/";
 
-  if (redirectTo) {
-    // Explicit redirect takes priority
+  if (redirectTo && redirectTo.trim() !== "") {
+    // Explicit redirect takes priority (must be non-empty)
     destination = redirectTo;
   } else if (mode === "host") {
     // Host intent → dashboard if already host, otherwise onboarding
