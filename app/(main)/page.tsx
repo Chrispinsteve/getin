@@ -16,12 +16,18 @@ export default async function HomePage() {
   const supabase = await createClient()
 
   // Fetch featured listings (no auth required)
-  const { data: listings } = await supabase
+  // Status must be "published" - this matches the RLS policy and how hosts publish listings
+  const { data: listings, error } = await supabase
     .from("listings")
     .select("*")
-    .eq("status", "active")
+    .eq("status", "published")
     .order("created_at", { ascending: false })
     .limit(12)
+
+  // Log any errors for debugging (won't break the page)
+  if (error) {
+    console.error("Error fetching listings:", error.message)
+  }
 
   return (
     <main className="min-h-screen bg-background">
