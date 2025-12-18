@@ -1,198 +1,137 @@
-# GetIn - Critical Fixes Documentation
+[CRITICAL_FIXES.md](https://github.com/user-attachments/files/24244272/CRITICAL_FIXES.md)
+# GetIn - Critical Fixes Documentation (CORRECTED)
 
-## 🔴 CRITICAL ISSUES FOUND AND FIXED
+## 🎯 DESIGN DECISIONS
 
-### Issue 1: HOSTS TABLE DID NOT EXIST
+### 1. Publishing Model: `published_at IS NOT NULL`
+- Listings are "published" when `published_at` has a timestamp
+- RLS policy: `SELECT USING (published_at IS NOT NULL)`
+- Frontend query: `.not("published_at", "is", null)`
+- This is Airbnb-style publishing (timestamp-based, not enum)
 
-**Symptom**: 
-- `ensureHostExists()` always failed
-- Users could not become hosts
-- Listings failed to create with FK constraint errors
+### 2. Profile Ownership: Database is Source of Truth
+- Profiles are created ONLY by the database trigger
+- App code ONLY reads profiles, never inserts
+- Eliminates race conditions between trigger and app code
 
-**Root Cause**:
-The `hosts` table was **referenced in migrations but never created**. The migration file `002_guest_backend_complete.sql` had triggers and FK references to `public.hosts`, but no `CREATE TABLE` statement.
-
-**Fix**: 
-Created `000_foundation_schema.sql` which creates the hosts table with all required columns:
-- `id`, `user_id`, `email`, `first_name`, `last_name`
-- `is_superhost`, `verified`, `average_rating`
-- `response_rate`, `response_time_hours`
-- Proper RLS policies
-
----
-
-### Issue 2: LISTINGS TABLE MISSING CRITICAL COLUMNS
-
-**Symptom**:
-- Creating listings failed
-- Titles not showing
-- Images not displaying
-
-**Root Cause**:
-The `001_create_listings_table.sql` only created basic columns. The code expected:
-- `host_id` (FK to hosts)
-- `title`, `description`
-- `bedrooms`, `beds`, `bathrooms`, `max_guests`
-- `house_rules`, `slug`, `published_at`
-- Various count columns
-
-**Fix**:
-`000_foundation_schema.sql` adds all missing columns with proper defaults.
+### 3. Storage Permissions: Safe Delete Policy
+- Anyone authenticated can delete from `listing-photos` bucket
+- No folder structure assumptions
+- Tighten later when folder conventions are stable
 
 ---
 
-### Issue 3: PROFILE CREATION RACE CONDITION
+## 📦 FILES IN THIS FIX
 
-**Symptom**:
-- Sometimes users had no profile after signup
-- Role checks failed silently
-- Login redirected to wrong places
+### 1. `scripts/migrations/000_foundation_schema.sql`
+**RUN THIS FIRST** - Creates all missing tables and policies:
 
-**Root Cause**:
-Two mechanisms tried to create profiles:
-1. Database trigger `handle_new_user()` (may not exist)
-2. `signUp()` action upsert (ran after auth)
+- ✅ Creates `hosts` table (was completely missing)
+- ✅ Adds missing columns to `listings` table
+- ✅ RLS policy: `published_at IS NOT NULL` (not `status = 'published'`)
+- ✅ Performance index on `published_at`
+- ✅ Profile trigger with `ON CONFLICT DO NOTHING` (idempotent)
+- ✅ Host role trigger (auto-adds 'host' role on host creation)
+- ✅ Safe storage delete policy
+- ✅ Least-privilege grants (SELECT only for anon)
 
-If trigger didn't exist and upsert failed due to RLS, no profile was created.
+### 2. `app/(auth)/actions.ts`
+Fixed auth actions:
 
-**Fix**:
-1. Database trigger uses `ON CONFLICT DO UPDATE` to handle races
-2. Auth actions explicitly call `ensureProfileExists()` 
-3. Profile creation is logged for debugging
+- ✅ Profile creation removed (DB trigger is source of truth)
+- ✅ `signIn` only reads profile, never writes
+- ✅ `signUp` lets trigger create profile
+- ✅ `ensureHostExists` properly creates host records
+- ✅ Console logging for debugging
 
----
+### 3. `app/(main)/page.tsx` (Homepage)
+Fixed listing display:
 
-### Issue 4: LOGIN REDIRECT FAILURES
+- ✅ Query: `.not("published_at", "is", null)` 
+- ✅ Image fallback with placeholder
+- ✅ Title fallback from property type + city
+- ✅ Ordered by `published_at` descending
 
-**Symptom**:
-- Login succeeded but user returned to homepage
-- Sessions existed but UI showed logged out state
-- Redirect loops when accessing protected routes
-
-**Root Cause**:
-1. Profile fetch could fail silently
-2. Empty `redirectTo` was truthy (`""`)
-3. No logging made debugging impossible
-
-**Fix**:
-1. `signIn()` now ensures profile exists before redirect
-2. Added explicit `redirectTo.trim() !== ""` check
-3. Added comprehensive console logging with `[AUTH]` prefix
+### 4. `app/(main)/listings/page.tsx`
+Same fixes as homepage for listing grid.
 
 ---
 
-### Issue 5: IMAGES NOT DISPLAYING
+## 🚀 INSTALLATION
 
-**Symptom**:
-- Listings visible but images were blank
-- No fallback when images missing
-
-**Root Cause**:
-1. Images stored in `photos` JSONB column with mixed formats
-2. No fallback UI for missing images
-3. Storage bucket may be private
-
-**Fix**:
-1. `getListingImageUrl()` helper handles all formats:
-   - `photos[0].url` (object format)
-   - `photos[0]` (string format)
-   - `images[0]` (alternative column)
-2. Fallback UI shows placeholder with "Photo à venir"
-3. Migration sets storage bucket to PUBLIC
-
----
-
-### Issue 6: TITLES NOT SHOWING
-
-**Symptom**:
-- Listing cards showed "Logement" instead of actual title
-- Host-defined titles not displayed
-
-**Root Cause**:
-1. `title` column didn't exist in database
-2. Code had wrong fallback chain
-
-**Fix**:
-1. Added `title` column in migration
-2. `getListingTitle()` helper with proper fallback:
-   - First: actual `title` field
-   - Fallback: Generated from `property_type` + `city`
-
----
-
-## 📋 ENTITY CREATION FLOW (AFTER FIXES)
-
-| Entity | Table | Created When | Created By | Verified |
-|--------|-------|--------------|------------|----------|
-| User | `auth.users` | Signup submit | Supabase Auth | ✅ |
-| Profile | `profiles` | Immediately after auth | DB trigger + action fallback | ✅ |
-| Host | `hosts` | First call to `ensureHostExists()` | `ensureHostExists()` in actions | ✅ |
-| Listing | `listings` | `createListing()` completes | become-a-host/actions | ✅ |
-| Images | `listing-photos` bucket | Photo upload step | `uploadListingPhoto()` | ✅ |
-
----
-
-## 🚀 MIGRATION ORDER
-
-**CRITICAL**: Run migrations in this exact order:
-
-```bash
-1. scripts/migrations/000_foundation_schema.sql   # FIRST - creates hosts table
-2. scripts/001_create_listings_table.sql          # If not already run
-3. scripts/migrations/002_guest_backend_complete.sql
-4. scripts/migrations/003_fix_profiles_table.sql  # Optional - already in 000
+### Step 1: Run Migration
+```sql
+-- In Supabase SQL Editor
+-- Copy contents of scripts/migrations/000_foundation_schema.sql
+-- Execute it
 ```
 
-The `000_foundation_schema.sql` is idempotent - safe to run multiple times.
+### Step 2: Replace Files
+Copy these files from the zip:
+- `app/(auth)/actions.ts`
+- `app/(main)/page.tsx`
+- `app/(main)/listings/page.tsx`
+
+### Step 3: Update Listing Creation
+Make sure your listing creation code sets `published_at`:
+```typescript
+// When publishing a listing:
+const insertData = {
+  // ... other fields ...
+  published_at: status === "published" ? new Date().toISOString() : null,
+}
+```
 
 ---
 
-## 🔐 RLS POLICIES SUMMARY
+## 🔍 ENTITY CREATION FLOW
 
-### profiles
-- SELECT: own profile only
-- INSERT: own profile only
-- UPDATE: own profile only
-
-### hosts
-- SELECT: public (for listing pages)
-- INSERT: own record only
-- UPDATE: own record only
-
-### listings
-- SELECT: published listings (public) OR own listings (hosts)
-- INSERT: hosts only (via host_id FK)
-- UPDATE: own listings only
-- DELETE: own listings only
-
-### storage (listing-photos)
-- SELECT: public
-- INSERT: authenticated users
-- DELETE: own folder only
+```
+SIGNUP:
+  auth.users ──trigger──> profiles (roles: ['guest'])
+                              │
+                              ▼
+BECOME HOST:                profiles (roles: ['guest', 'host'])
+  ensureHostExists() ──────> hosts ──trigger──┘
+         │
+         ▼
+CREATE LISTING:
+  createListing() ──────────> listings
+                               │
+                               └──> published_at = NOW() for published
+```
 
 ---
 
-## 🧪 VERIFICATION CHECKLIST
+## ✅ VERIFICATION CHECKLIST
 
-After applying fixes, verify:
+After applying fixes:
 
-- [ ] New user can sign up without database errors
-- [ ] New user automatically has profile with `roles: ['guest']`
-- [ ] User can log in and is redirected correctly
-- [ ] Going to `/become-a-host` creates host record
-- [ ] Host can create listing with title and images
-- [ ] Published listings appear on homepage
-- [ ] Listing images display (or show placeholder)
-- [ ] Listing titles are visible to guests
+- [ ] Run migration 000_foundation_schema.sql
+- [ ] New signup creates user + profile (via trigger)
+- [ ] Login works and shows correct roles
+- [ ] `/become-a-host` creates host record
+- [ ] Host can create listing with `published_at` set
+- [ ] Homepage shows listings where `published_at IS NOT NULL`
+- [ ] Images display or show fallback placeholder
+- [ ] Titles show (from `title` field or generated)
 
 ---
 
-## 📝 DEBUGGING
+## 🐛 DEBUGGING
 
-All auth operations now log with prefixes:
-- `[AUTH]` - Authentication operations
-- `[HOST]` - Host creation operations
-- `[HOME]` - Homepage data fetching
-- `[LISTINGS]` - Listings page operations
+All operations log with prefixes:
+- `[AUTH]` - Authentication
+- `[HOST]` - Host creation
+- `[HOME]` - Homepage queries
+- `[LISTINGS]` - Listings page queries
 
-Check server console for these logs when debugging issues.
+Check server console for these logs.
+
+---
+
+## ⚠️ KNOWN ARCHITECTURAL SMELLS (Future Cleanup)
+
+1. **Consider removing `status` column entirely** - Use only `published_at`
+2. **Add folder structure enforcement later** - Then tighten storage delete policy
+3. **Add `published_at` index for performance** - Already included in migration
