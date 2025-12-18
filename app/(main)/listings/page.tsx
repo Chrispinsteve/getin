@@ -59,17 +59,20 @@ function getListingTitle(listing: any): string {
 export default async function ListingsPage() {
   const supabase = await createClient()
   
-  // Status must be "published" - matches RLS policy
+  // =====================================================
+  // CRITICAL: Query uses published_at IS NOT NULL
+  // This aligns with the RLS policy and Airbnb-style publishing
+  // =====================================================
   const { data: listings, error } = await supabase
     .from("listings")
     .select("*")
-    .eq("status", "published")
-    .order("created_at", { ascending: false })
+    .not("published_at", "is", null)  // published_at IS NOT NULL
+    .order("published_at", { ascending: false })
 
   if (error) {
     console.error("[LISTINGS] Error fetching listings:", error.message)
   } else {
-    console.log("[LISTINGS] Fetched", listings?.length || 0, "listings")
+    console.log("[LISTINGS] Fetched", listings?.length || 0, "published listings")
   }
 
   return (
