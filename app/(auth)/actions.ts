@@ -16,6 +16,13 @@ export type AuthState = {
   };
 };
 
+/**
+ * Intent-based signup
+ * 
+ * mode=guest → redirect to /guest/voyages (or provided redirect)
+ * mode=host → redirect to /become-a-host (or provided redirect)
+ * no mode → default to guest experience (/)
+ */
 export async function signUp(
   prevState: AuthState | null,
   formData: FormData,
@@ -27,6 +34,8 @@ export async function signUp(
   const confirmPassword = formData.get("confirmPassword") as string;
   const firstName = formData.get("firstName") as string;
   const lastName = formData.get("lastName") as string;
+  const mode = formData.get("mode") as string | null;
+  const redirectTo = formData.get("redirectTo") as string | null;
 
   // Validate passwords match
   if (password !== confirmPassword) {
@@ -57,8 +66,6 @@ export async function signUp(
     return { error: error.message };
   }
 
-  // Profile is created automatically by database trigger
-  // Just ensure user was created
   if (!data.user) {
     return { error: "Erreur lors de la création du compte" };
   }
@@ -72,10 +79,32 @@ export async function signUp(
   }
 
   revalidatePath("/", "layout");
-  // Redirect guests to browse listings, they can access /voyages after login
-  redirect("/listings");
+
+  // Intent-based redirect
+  let destination = "/";
+  
+  if (redirectTo) {
+    // Explicit redirect takes priority
+    destination = redirectTo;
+  } else if (mode === "host") {
+    // Host intent → onboarding
+    destination = "/become-a-host";
+  } else if (mode === "guest") {
+    // Guest intent → trips page
+    destination = "/guest/voyages";
+  }
+  // Default (no mode) → homepage
+
+  redirect(destination);
 }
 
+/**
+ * Intent-based sign in
+ * 
+ * mode=guest → redirect to guest zone
+ * mode=host → redirect to host zone (dashboard if host, become-a-host if not)
+ * no mode → respect redirectTo or default to homepage
+ */
 export async function signIn(
   prevState: AuthState | null,
   formData: FormData,
@@ -84,7 +113,8 @@ export async function signIn(
 
   const email = formData.get("email") as string;
   const password = formData.get("password") as string;
-  const redirectTo = formData.get("redirectTo") as string;
+  const mode = formData.get("mode") as string | null;
+  const redirectTo = formData.get("redirectTo") as string | null;
 
   const { data, error } = await supabase.auth.signInWithPassword({
     email,
@@ -95,29 +125,33 @@ export async function signIn(
     return { error: error.message };
   }
 
-  // Determine redirect based on user roles
-  let destination = redirectTo || "/listings";
-  
-  if (data.user) {
-    const { data: profile } = await supabase
-      .from("profiles")
-      .select("roles")
-      .eq("id", data.user.id)
-      .single();
-    
-    const roles = profile?.roles || ["guest"];
-    
-    if (!redirectTo) {
-      // Default redirect based on role
-      if (roles.includes("host") && !roles.includes("guest")) {
-        destination = "/dashboard";
-      } else if (roles.includes("guest")) {
-        destination = "/voyages";
-      }
-    }
-  }
+  // Get user roles
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("roles")
+    .eq("id", data.user.id)
+    .single();
+
+  const roles = profile?.roles || ["guest"];
+  const isHost = roles.includes("host");
 
   revalidatePath("/", "layout");
+
+  // Determine destination based on intent
+  let destination = "/";
+
+  if (redirectTo) {
+    // Explicit redirect takes priority
+    destination = redirectTo;
+  } else if (mode === "host") {
+    // Host intent → dashboard if already host, otherwise onboarding
+    destination = isHost ? "/dashboard" : "/become-a-host";
+  } else if (mode === "guest") {
+    // Guest intent → trips page
+    destination = "/guest/voyages";
+  }
+  // Default (no mode) → homepage
+
   redirect(destination);
 }
 
@@ -136,6 +170,10 @@ export async function getUser() {
   return user;
 }
 
+/**
+ * Ensure host profile exists - called during host onboarding
+ * Creates host record and adds host role to profile
+ */
 export async function ensureHostExists(): Promise<{
   hostId: string | null;
   error: string | null;
@@ -167,13 +205,11 @@ export async function ensureHostExists(): Promise<{
     // Get user profile data
     const { data: profile } = await supabase
       .from("profiles")
-      .select("full_name")
+      .select("full_name, roles")
       .eq("id", user.id)
       .single();
 
-    const names = (profile?.full_name || user.email?.split("@")[0] || "").split(
-      " ",
-    );
+    const names = (profile?.full_name || user.email?.split("@")[0] || "").split(" ");
     const firstName = names[0] || "";
     const lastName = names.slice(1).join(" ") || "";
 
@@ -193,13 +229,14 @@ export async function ensureHostExists(): Promise<{
       return { hostId: null, error: createError.message };
     }
 
-    // Add host role to profile
-    await supabase
-      .from("profiles")
-      .update({ 
-        roles: supabase.rpc ? undefined : ["guest", "host"]  // Will be handled by trigger
-      })
-      .eq("id", user.id);
+    // Add host role to profile if not already present
+    const currentRoles = profile?.roles || ["guest"];
+    if (!currentRoles.includes("host")) {
+      await supabase
+        .from("profiles")
+        .update({ roles: [...currentRoles, "host"] })
+        .eq("id", user.id);
+    }
 
     return { hostId: newHost.id, error: null };
   }
