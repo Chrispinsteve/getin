@@ -2,6 +2,7 @@
 
 import { useActionState } from "react"
 import { useState } from "react"
+import { useSearchParams } from "next/navigation"
 import Link from "next/link"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -11,14 +12,45 @@ import { Eye, EyeOff, Loader2, AlertCircle, CheckCircle } from "lucide-react"
 import { signUp, type AuthState } from "@/app/(auth)/actions"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 
+/**
+ * SignUpForm - Intent-aware signup form
+ * 
+ * Supports mode parameter:
+ * - mode=guest → "Create account to book your stay"
+ * - mode=host → "Create account to start hosting"
+ * - no mode → Generic signup message
+ */
 export function SignUpForm() {
   const [showPassword, setShowPassword] = useState(false)
   const [showConfirmPassword, setShowConfirmPassword] = useState(false)
+  const searchParams = useSearchParams()
+
+  // Intent parameters
+  const mode = searchParams.get("mode") // "guest" | "host" | null
+  const redirectTo = searchParams.get("redirect") || ""
 
   const [state, formAction, isPending] = useActionState<AuthState | null, FormData>(
     signUp,
     null
   )
+
+  // Intent-based messaging
+  const getTitle = () => {
+    if (mode === "host") return "Créez votre compte hôte"
+    if (mode === "guest") return "Créez votre compte"
+    return "Créez votre compte"
+  }
+
+  const getDescription = () => {
+    if (mode === "host") return "Commencez à héberger et à gagner avec GetIn"
+    if (mode === "guest") return "Réservez des logements uniques en Haïti"
+    return "Rejoignez GetIn aujourd'hui"
+  }
+
+  // Preserve mode in login link
+  const loginLink = mode
+    ? `/login?mode=${mode}${redirectTo ? `&redirect=${encodeURIComponent(redirectTo)}` : ""}`
+    : "/login"
 
   // Show success message if email confirmation is required
   if (state?.success) {
@@ -32,7 +64,7 @@ export function SignUpForm() {
             </AlertDescription>
           </Alert>
           <p className="mt-4 text-center text-sm text-muted-foreground">
-            <Link href="/login" className="font-medium text-primary hover:underline">
+            <Link href={loginLink} className="font-medium text-primary hover:underline">
               Retour à la connexion
             </Link>
           </p>
@@ -44,9 +76,9 @@ export function SignUpForm() {
   return (
     <Card className="w-full max-w-md border-border/50 shadow-lg">
       <CardHeader className="space-y-1 text-center">
-        <CardTitle className="text-2xl font-bold tracking-tight">Créez votre compte</CardTitle>
+        <CardTitle className="text-2xl font-bold tracking-tight">{getTitle()}</CardTitle>
         <CardDescription className="text-muted-foreground">
-          Commencez à héberger et à gagner avec GetIn
+          {getDescription()}
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -58,6 +90,10 @@ export function SignUpForm() {
         )}
 
         <form action={formAction} className="space-y-4">
+          {/* Hidden fields for intent */}
+          <input type="hidden" name="mode" value={mode || ""} />
+          <input type="hidden" name="redirectTo" value={redirectTo} />
+
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
               <Label htmlFor="firstName">Prénom</Label>
@@ -205,7 +241,7 @@ export function SignUpForm() {
 
           <p className="text-center text-sm text-muted-foreground">
             Déjà un compte ?{" "}
-            <Link href="/login" className="font-medium text-primary hover:underline">
+            <Link href={loginLink} className="font-medium text-primary hover:underline">
               Se connecter
             </Link>
           </p>
