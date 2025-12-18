@@ -17,40 +17,12 @@ export type AuthState = {
 };
 
 // =====================================================
-// HELPER: Ensure profile exists (idempotent)
+// DESIGN DECISION: DB IS SOURCE OF TRUTH FOR PROFILES
 // =====================================================
-async function ensureProfileExists(
-  supabase: Awaited<ReturnType<typeof createClient>>,
-  userId: string,
-  email: string,
-  fullName: string = ""
-): Promise<{ success: boolean; error?: string }> {
-  console.log("[AUTH] Ensuring profile exists for user:", userId);
-
-  const { error } = await supabase
-    .from("profiles")
-    .upsert(
-      {
-        id: userId,
-        email: email,
-        full_name: fullName,
-        roles: ["guest"],
-        updated_at: new Date().toISOString(),
-      },
-      {
-        onConflict: "id",
-        ignoreDuplicates: false,
-      }
-    );
-
-  if (error) {
-    console.error("[AUTH] Profile creation/update failed:", error);
-    return { success: false, error: error.message };
-  }
-
-  console.log("[AUTH] Profile ensured successfully");
-  return { success: true };
-}
+// - Profile creation happens ONLY in the database trigger
+// - App code ONLY reads profiles, never inserts
+// - This eliminates race conditions and double source of truth
+// =====================================================
 
 // =====================================================
 // SIGNUP
@@ -84,6 +56,7 @@ export async function signUp(
   const fullName = `${firstName} ${lastName}`.trim();
 
   // Step 1: Create auth user
+  // The database trigger will automatically create the profile
   const { data, error } = await supabase.auth.signUp({
     email,
     password,
@@ -107,6 +80,7 @@ export async function signUp(
   }
 
   console.log("[AUTH] Auth user created:", data.user.id);
+  // Profile is created by database trigger - we don't insert here
 
   // Step 2: Check if email confirmation is required
   if (data.user && !data.session) {
@@ -117,22 +91,9 @@ export async function signUp(
     };
   }
 
-  // Step 3: Ensure profile exists (atomic, handles race with trigger)
-  const profileResult = await ensureProfileExists(
-    supabase,
-    data.user.id,
-    email,
-    fullName
-  );
-
-  if (!profileResult.success) {
-    console.error("[AUTH] Profile creation failed but continuing...");
-    // Don't fail signup - the trigger may have created it
-  }
-
   revalidatePath("/", "layout");
 
-  // Step 4: Determine redirect destination
+  // Step 3: Determine redirect destination
   let destination = "/";
 
   if (redirectTo && redirectTo.trim() !== "") {
@@ -176,15 +137,7 @@ export async function signIn(
 
   console.log("[AUTH] Auth successful for user:", data.user.id);
 
-  // Step 2: Ensure profile exists (handles legacy users without profiles)
-  await ensureProfileExists(
-    supabase,
-    data.user.id,
-    data.user.email || email,
-    data.user.user_metadata?.full_name || ""
-  );
-
-  // Step 3: Get user roles
+  // Step 2: Read user roles (DB is source of truth - we only SELECT)
   const { data: profile, error: profileError } = await supabase
     .from("profiles")
     .select("roles")
@@ -192,8 +145,9 @@ export async function signIn(
     .single();
 
   if (profileError) {
-    console.error("[AUTH] Profile fetch failed:", profileError);
-    // Continue with default roles - profile should have been created above
+    // Profile should exist from the signup trigger
+    // If it doesn't, this is a data integrity issue
+    console.error("[AUTH] Profile not found for user:", data.user.id, profileError);
   }
 
   const roles = profile?.roles || ["guest"];
@@ -203,7 +157,7 @@ export async function signIn(
 
   revalidatePath("/", "layout");
 
-  // Step 4: Determine redirect destination
+  // Step 3: Determine redirect destination
   let destination = "/";
 
   if (redirectTo && redirectTo.trim() !== "") {
@@ -264,15 +218,7 @@ export async function ensureHostExists(): Promise<{
 
   console.log("[HOST] Ensuring host exists for user:", user.id);
 
-  // Step 2: Ensure profile exists first (required)
-  await ensureProfileExists(
-    supabase,
-    user.id,
-    user.email || "",
-    user.user_metadata?.full_name || ""
-  );
-
-  // Step 3: Check if host record already exists
+  // Step 2: Check if host record already exists
   const { data: existingHost, error: fetchError } = await supabase
     .from("hosts")
     .select("id")
@@ -284,11 +230,11 @@ export async function ensureHostExists(): Promise<{
     return { hostId: existingHost.id, error: null };
   }
 
-  // Step 4: Create host record if it doesn't exist (PGRST116 = not found)
+  // Step 3: Create host record if it doesn't exist (PGRST116 = not found)
   if (fetchError && fetchError.code === "PGRST116") {
     console.log("[HOST] Creating new host record");
 
-    // Get profile for name data
+    // Get profile for name data (READ ONLY - profile created by trigger)
     const { data: profile } = await supabase
       .from("profiles")
       .select("full_name")
@@ -320,7 +266,7 @@ export async function ensureHostExists(): Promise<{
     }
 
     console.log("[HOST] Host created successfully:", newHost.id);
-    // Note: The database trigger will automatically add 'host' role to profile
+    // The database trigger will automatically add 'host' role to profile
     return { hostId: newHost.id, error: null };
   }
 
