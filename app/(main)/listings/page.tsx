@@ -1,5 +1,5 @@
 import { createClient } from "@/lib/supabase/server"
-import { Navigation } from "@/components/navigation"
+import { PublicNav } from "@/components/public-nav"
 import { Footer } from "@/components/footer"
 import Link from "next/link"
 import Image from "next/image"
@@ -7,8 +7,8 @@ import { Star, MapPin, Users, Bed } from "lucide-react"
 import { Button } from "@/components/ui/button"
 
 export const metadata = {
-  title: "Browse Stays | GetIn",
-  description: "Find amazing places to stay in Haiti",
+  title: "Explorer les logements | GetIn",
+  description: "Trouvez des logements uniques en Haïti",
 }
 
 export default async function ListingsPage() {
@@ -22,7 +22,7 @@ export default async function ListingsPage() {
 
   return (
     <div className="min-h-screen">
-      <Navigation />
+      <PublicNav />
       <main className="pt-20 pb-12">
         <div className="container mx-auto px-4">
           {/* Header */}
