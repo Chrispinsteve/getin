@@ -12,22 +12,51 @@ import { useState } from "react"
 import { signIn, type AuthState } from "@/app/(auth)/actions"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 
+/**
+ * LoginForm - Intent-aware login form
+ * 
+ * Supports mode parameter:
+ * - mode=guest → "Sign in to continue your booking"
+ * - mode=host → "Sign in to manage your listings"
+ * - no mode → Generic welcome message
+ */
 export function LoginForm() {
   const [showPassword, setShowPassword] = useState(false)
   const searchParams = useSearchParams()
-  const redirectTo = searchParams.get("redirect") || "/dashboard"
+  
+  // Intent parameters
+  const mode = searchParams.get("mode") // "guest" | "host" | null
+  const redirectTo = searchParams.get("redirect") || ""
 
   const [state, formAction, isPending] = useActionState<AuthState | null, FormData>(
     signIn,
     null
   )
 
+  // Intent-based messaging
+  const getTitle = () => {
+    if (mode === "host") return "Accédez à votre espace hôte"
+    if (mode === "guest") return "Connectez-vous pour continuer"
+    return "Bon retour !"
+  }
+
+  const getDescription = () => {
+    if (mode === "host") return "Gérez vos annonces et réservations"
+    if (mode === "guest") return "Finalisez votre réservation"
+    return "Connectez-vous à votre compte GetIn"
+  }
+
+  // Preserve mode in signup link
+  const signupLink = mode 
+    ? `/signup?mode=${mode}${redirectTo ? `&redirect=${encodeURIComponent(redirectTo)}` : ""}`
+    : "/signup"
+
   return (
     <Card className="w-full max-w-md border-border/50 shadow-lg">
       <CardHeader className="space-y-1 text-center">
-        <CardTitle className="text-2xl font-bold tracking-tight">Bon retour !</CardTitle>
+        <CardTitle className="text-2xl font-bold tracking-tight">{getTitle()}</CardTitle>
         <CardDescription className="text-muted-foreground">
-          Connectez-vous pour gérer vos annonces et réservations
+          {getDescription()}
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -39,6 +68,8 @@ export function LoginForm() {
         )}
 
         <form action={formAction} className="space-y-4">
+          {/* Hidden fields for intent */}
+          <input type="hidden" name="mode" value={mode || ""} />
           <input type="hidden" name="redirectTo" value={redirectTo} />
 
           <div className="space-y-2">
@@ -114,7 +145,7 @@ export function LoginForm() {
 
           <p className="text-center text-sm text-muted-foreground">
             Pas encore de compte ?{" "}
-            <Link href="/signup" className="font-medium text-primary hover:underline">
+            <Link href={signupLink} className="font-medium text-primary hover:underline">
               Créer un compte
             </Link>
           </p>
