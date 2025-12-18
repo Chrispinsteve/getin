@@ -14,11 +14,17 @@ export const metadata = {
 export default async function ListingsPage() {
   const supabase = await createClient()
   
-  const { data: listings } = await supabase
+  // Status must be "published" - matches RLS policy and how hosts publish listings
+  const { data: listings, error } = await supabase
     .from("listings")
     .select("*")
-    .eq("status", "active")
+    .eq("status", "published")
     .order("created_at", { ascending: false })
+
+  // Log errors for debugging
+  if (error) {
+    console.error("Error fetching listings:", error.message)
+  }
 
   return (
     <div className="min-h-screen">
